@@ -998,3 +998,359 @@ def draw_progress_screen(stdscr, colors: Dict[str, int], dependency_ok: bool, ch
         safe_add(stdscr, 18 + line_index, 5, line, width - 10, curses.A_DIM)
     safe_add(stdscr, min(height - 3, 21), 3, "Overall advances per processed title; current-stage percent is from chdman.", width - 6, curses.A_DIM)
     footer(stdscr, "Q/ESC: stop current conversion (all source files will be kept)")
+    stdscr.refresh()
+
+
+def run_chdman_tui(
+    stdscr, colors: Dict[str, int], dependency_ok: bool, chdman: str, job: DiscJob,
+    state: Dict[str, object],
+) -> Tuple[bool, bool, str]:
+    output = output_for(job)
+    temporary = output.with_name(".%s.%s.partial.chd" % (output.stem, uuid.uuid4().hex[:10]))
+    if output.exists():
+        return False, False, "Output already exists; refusing to overwrite."
+    create_cmd = [chdman, job.command, "-i", str(job.descriptor), "-o", str(temporary)]
+    state["phase"] = "Creating CHD"
+    state["title_pct"] = None
+    try:
+        code, canceled = run_monitored_command(stdscr, colors, dependency_ok, chdman, create_cmd, "create", state)
+    except KeyboardInterrupt:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    if canceled:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, True, "Canceled by user. Original files were kept."
+    if code != 0:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, False, "chdman %s failed with exit code %d. Sources were kept." % (job.command, code)
+    try:
+        if not temporary.is_file() or temporary.stat().st_size <= 0:
+            raise RuntimeError("no usable output was produced")
+    except (OSError, RuntimeError) as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, False, "Temporary CHD check failed: " + str(exc)
+    state["phase"] = "Verifying CHD integrity"
+    state["title_pct"] = None
+    verify_cmd = [chdman, "verify", "-i", str(temporary)]
+    try:
+        code, canceled = run_monitored_command(stdscr, colors, dependency_ok, chdman, verify_cmd, "verify", state)
+    except KeyboardInterrupt:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    if canceled:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, True, "Verification canceled. Original files were kept."
+    if code != 0:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, False, "CHD verification failed with exit code %d. Sources were kept." % code
+    if output.exists():
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, False, "Output appeared during conversion; refusing to overwrite."
+    try:
+        os.link(temporary, output)
+    except FileExistsError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, False, "Output appeared during conversion; refusing to overwrite."
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, False, "Could not safely publish verified CHD: " + str(exc)
+    try:
+        temporary.unlink(missing_ok=True)
+    except OSError:
+        pass
+    state["title_pct"] = 100.0
+    state["phase"] = "CHD created and verified"
+    return True, False, "CHD created and verified."
+
+
+def write_batch_log(root: Path, results: Sequence[JobResult], deleted: int, preserved: int, details: Sequence[str], interrupted: bool) -> Optional[Path]:
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        destination = LOG_DIR / ("batch_" + stamp + ".log")
+        lines = [APP_NAME + " v" + APP_VERSION, FACTORY, "Date: " + datetime.now().isoformat(timespec="seconds"), "Folder: " + str(root), "Interrupted: " + str(interrupted), ""]
+        for result in results:
+            lines.append("[%s] %s -> %s" % (result.status, result.job.descriptor, output_for(result.job)))
+            lines.append("  " + result.message)
+        lines.extend(["", "Deleted source files: %d" % deleted, "Preserved source files: %d" % preserved, ""])
+        lines.extend(details)
+        destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return destination
+    except OSError:
+        return None
+
+
+def draw_summary(stdscr, colors: Dict[str, int], dependency_ok: bool, chdman: Optional[str], results: Sequence[JobResult], deleted: int, preserved: int, cleanup_enabled: bool, interrupted: bool, log_path: Optional[Path], cleanup_details: Sequence[str]) -> None:
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    header(stdscr, colors, dependency_ok, chdman, "BATCH SUMMARY")
+    success = sum(1 for r in results if r.status == "SUCCESS")
+    failed = sum(1 for r in results if r.status == "FAILED")
+    safe_add(stdscr, 5, 4, "Converted and verified: %d" % success, width - 8, colors.get("green", 0) | curses.A_BOLD)
+    safe_add(stdscr, 6, 4, "Failed: %d" % failed, width - 8, colors.get("red", 0) if failed else 0)
+    safe_add(stdscr, 7, 4, "Interrupted: %s" % ("YES - cleanup disabled" if interrupted else "NO"), width - 8)
+    if cleanup_enabled and not interrupted:
+        safe_add(stdscr, 9, 4, "Source files deleted: %d" % deleted, width - 8, colors.get("yellow", 0) | curses.A_BOLD)
+        safe_add(stdscr, 10, 4, "Source files preserved: %d" % preserved, width - 8)
+    else:
+        safe_add(stdscr, 9, 4, "Source cleanup: OFF - all original files kept", width - 8, colors.get("green", 0))
+    safe_add(stdscr, 12, 4, "Per-title results:", width - 8, curses.A_BOLD)
+    for index, result in enumerate(results[:max(1, height - 18)]):
+        mark = "OK" if result.status == "SUCCESS" else "FAIL"
+        attr = colors.get("green" if mark == "OK" else "red", 0)
+        safe_add(stdscr, 13 + index, 6, "[%s] %s" % (mark, result.job.descriptor.name), width - 12, attr)
+    if log_path:
+        safe_add(stdscr, min(height - 5, 22), 4, "Log saved: " + str(log_path), width - 8, curses.A_DIM)
+    if cleanup_details:
+        safe_add(stdscr, min(height - 4, 23), 4, "Cleanup detail lines: %d (full list in log)" % len(cleanup_details), width - 8, curses.A_DIM)
+    footer(stdscr, "Press any key to return to the main menu")
+    stdscr.refresh()
+    stdscr.getch()
+
+
+def run_batch(
+    stdscr, colors: Dict[str, int], dependency_ok: bool, chdman: str, root: Path,
+    runnable: Sequence[DiscJob], all_jobs: Sequence[DiscJob], delete_sources: bool,
+) -> None:
+    signatures = collect_initial_signatures(all_jobs)
+    results: List[JobResult] = []
+    total = len(runnable)
+    interrupted = False
+    for index, job in enumerate(runnable, 1):
+        state: Dict[str, object] = {
+            "index": index, "total": total, "completed": index - 1,
+            "title": str(job.descriptor), "title_pct": None, "phase": "Starting chdman", "log": [],
+        }
+        draw_progress_screen(stdscr, colors, dependency_ok, chdman, state)
+        try:
+            success, canceled, message = run_chdman_tui(stdscr, colors, dependency_ok, chdman, job, state)
+        except KeyboardInterrupt:
+            success, canceled, message = False, True, "Interrupted by user. Sources were kept."
+        results.append(JobResult(job, "SUCCESS" if success else "FAILED", message, output_for(job) if success else None))
+        state["completed"] = index
+        state["phase"] = "CHD created and verified" if success else "Conversion failed"
+        if success:
+            state["title_pct"] = 100.0
+        else:
+            state["title_pct"] = None
+        draw_progress_screen(stdscr, colors, dependency_ok, chdman, state)
+        time.sleep(0.12)
+        if canceled:
+            interrupted = True
+            break
+    deleted = 0
+    preserved = 0
+    cleanup_details: List[str] = []
+    cleanup_enabled = delete_sources and not interrupted
+    if cleanup_enabled and any(r.status == "SUCCESS" for r in results):
+        if confirm_cleanup_final(stdscr, colors, dependency_ok, chdman, results):
+            deleted, preserved, cleanup_details = delete_successful_sources(root, all_jobs, results, signatures)
+        else:
+            cleanup_enabled = False
+            cleanup_details.append("Cleanup canceled at final confirmation; every original file was kept.")
+    elif delete_sources and interrupted:
+        cleanup_details.append("Cleanup disabled because the batch was interrupted.")
+    elif delete_sources and not any(r.status == "SUCCESS" for r in results):
+        cleanup_enabled = False
+        cleanup_details.append("No verified CHDs were produced; no source files were eligible for deletion.")
+    log_path = write_batch_log(root, results, deleted, preserved, cleanup_details, interrupted)
+    draw_summary(stdscr, colors, dependency_ok, chdman, results, deleted, preserved, cleanup_enabled, interrupted, log_path, cleanup_details)
+
+
+def run_app(stdscr) -> None:
+    colors = init_colors()
+    try:
+        curses.curs_set(0)
+        stdscr.keypad(True)
+        stdscr.timeout(-1)
+    except curses.error:
+        pass
+    config = load_config()
+    chdman = find_chdman()
+    dependency_ok, dependency_message = probe_chdman(chdman)
+    boot_animation(stdscr, colors, dependency_ok, chdman)
+    selected = 0
+    selected_folder: Optional[Path] = None
+    notice = dependency_message if not dependency_ok else ""
+    while True:
+        if screen_too_small(stdscr):
+            key = stdscr.getch()
+            if key in (ord("q"), ord("Q"), 27):
+                return
+            continue
+        draw_menu(stdscr, colors, dependency_ok, chdman, config, selected, selected_folder, notice)
+        key = stdscr.getch()
+        if key in (curses.KEY_UP, ord("k")):
+            selected = (selected - 1) % 6
+        elif key in (curses.KEY_DOWN, ord("j")):
+            selected = (selected + 1) % 6
+        elif key in (ord("q"), ord("Q"), 27):
+            return
+        elif key == ord(" ") and selected == 2:
+            config["delete_sources"] = not bool(config.get("delete_sources", False))
+            save_config(config)
+            notice = "Source cleanup set to %s." % ("ON" if config["delete_sources"] else "OFF")
+        elif key in (10, 13):
+            if selected == 0:
+                if not dependency_ok:
+                    notice = dependency_message
+                    continue
+                root = folder_picker(stdscr, colors, dependency_ok, chdman)
+                if root is None:
+                    notice = "Folder selection canceled."
+                    continue
+                try:
+                    root = root.resolve(strict=True)
+                    if not root.is_dir():
+                        raise NotADirectoryError(str(root))
+                except OSError as exc:
+                    notice = "Selected folder is not accessible: " + str(exc)
+                    continue
+                scan_state = {"dirs": 0, "current": str(root)}
+                def update_scan(count: int, location: str) -> None:
+                    scan_state["dirs"] = count
+                    scan_state["current"] = location
+                    draw_scanning(stdscr, colors, dependency_ok, chdman, root, count, location)
+                all_jobs, folders_scanned = scan_for_jobs(root, update_scan)
+                mark_playlist_dependencies(root, all_jobs)
+                selected_exts = set(config.get("extensions", DEFAULT_EXTENSIONS))
+                selected_jobs = [job for job in all_jobs if job.descriptor.suffix.lower() in selected_exts]
+                choose_iso_modes(all_jobs, str(config.get("iso_mode", "auto")))
+                selected_folder = root
+                entries = prepare_preview(selected_jobs, all_jobs, root)
+                if not entries:
+                    notice = "No descriptors matched the selected extensions. Adjust File extensions and scan again."
+                    continue
+                runnable = [entry.job for entry in entries if entry.ready]
+                cursor = 0
+                scroll = 0
+                delete_for_batch = bool(config.get("delete_sources", False))
+                while True:
+                    draw_results(stdscr, colors, dependency_ok, chdman, root, entries, cursor, scroll, delete_for_batch, folders_scanned)
+                    pkey = stdscr.getch()
+                    if pkey in (curses.KEY_UP, ord("k")):
+                        cursor = max(0, cursor - 1)
+                    elif pkey in (curses.KEY_DOWN, ord("j")):
+                        cursor = min(len(entries) - 1, cursor + 1)
+                    elif pkey in (ord("d"), ord("D")):
+                        delete_for_batch = not delete_for_batch
+                    elif pkey in (ord("q"), ord("Q"), 27):
+                        notice = "Scan results dismissed. No files were changed."
+                        break
+                    elif pkey in (10, 13):
+                        if not runnable:
+                            notice = "No eligible conversions. Nothing was changed."
+                            break
+                        if delete_for_batch:
+                            if not confirm_cleanup_arm(stdscr, colors, dependency_ok, chdman):
+                                notice = "Cleanup was not armed. No files were changed."
+                                break
+                        config["delete_sources"] = delete_for_batch
+                        save_config(config)
+                        run_batch(stdscr, colors, dependency_ok, chdman or "chdman", root, runnable, all_jobs, delete_for_batch)
+                        notice = "Batch finished. Review the summary and log."
+                        break
+            elif selected == 1:
+                extension_menu(stdscr, colors, dependency_ok, chdman, config)
+                notice = "Extension preferences saved."
+            elif selected == 2:
+                config["delete_sources"] = not bool(config.get("delete_sources", False))
+                save_config(config)
+                notice = "Source cleanup set to %s." % ("ON" if config["delete_sources"] else "OFF")
+            elif selected == 3:
+                iso_menu(stdscr, colors, dependency_ok, chdman, config)
+                notice = "ISO handling preference saved."
+            elif selected == 4:
+                about_screen(stdscr, colors, dependency_ok, chdman)
+            elif selected == 5:
+                return
+
+
+def launch_terminal_if_needed() -> bool:
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return True
+    script = str(Path(__file__).resolve())
+    python = sys.executable or "python3"
+    candidates: List[List[str]] = []
+    if shutil.which("x-terminal-emulator"):
+        candidates.append(["x-terminal-emulator", "-e", python, script, "--in-terminal"])
+    if shutil.which("xfce4-terminal"):
+        candidates.append(["xfce4-terminal", "--disable-server", "--command", shlex.join([python, script, "--in-terminal"])])
+    if shutil.which("gnome-terminal"):
+        candidates.append(["gnome-terminal", "--wait", "--", python, script, "--in-terminal"])
+    if shutil.which("konsole"):
+        candidates.append(["konsole", "-e", python, script, "--in-terminal"])
+    if shutil.which("kitty"):
+        candidates.append(["kitty", "--", python, script, "--in-terminal"])
+    if shutil.which("alacritty"):
+        candidates.append(["alacritty", "-e", python, script, "--in-terminal"])
+    if shutil.which("xterm"):
+        candidates.append(["xterm", "-e", python, script, "--in-terminal"])
+    for command in candidates:
+        try:
+            subprocess.Popen(command, start_new_session=True)
+            return False
+        except (OSError, subprocess.SubprocessError):
+            continue
+    print(APP_NAME + " needs an interactive terminal.")
+    print("Open a terminal in this folder and run: python3 " + shlex.quote(script))
+    try:
+        input("Press Enter to close...")
+    except (EOFError, KeyboardInterrupt):
+        pass
+    return False
+
+
+def main() -> int:
+    if not launch_terminal_if_needed():
+        return 0
+    if curses is None:
+        print("This Python installation does not include curses. Install the system Python curses module.")
+        input("Press Enter to close...")
+        return 1
+    try:
+        curses.wrapper(run_app)
+    except KeyboardInterrupt:
+        return 130
+    except curses.error as exc:
+        print("Terminal UI error: " + str(exc))
+        try:
+            input("Press Enter to close...")
+        except (EOFError, KeyboardInterrupt):
+            pass
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
