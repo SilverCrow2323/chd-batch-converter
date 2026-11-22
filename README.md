@@ -1,72 +1,69 @@
-# CHD Batch Converter
+# 🎮 CHD Batch Converter
 
-**SPDW Factory** · Version **2.0.0** · Linux-first · Python 3.9+
+**SPDW Factory** · **v2.1.0** · Linux · Python 3.9+
 
-A recursive game-disc image converter with a full-screen terminal UI. Choose a folder, scan its subfolders, review the conversion queue and convert supported descriptors with MAME's `chdman`.
+A small terminal tool for scanning a game library recursively and converting supported disc images to CHD with MAME's `chdman`.
 
-## Features
+## 📸 Quick look
 
-- Animated ASCII startup and SPDW Factory branding.
-- Version information and a green/red `chdman` dependency LED.
-- Built-in terminal folder browser and recursive scanning.
-- Extension checklist; `.cue`, `.gdi`, `.toc` and `.iso` are enabled by default.
-- Preview screen with READY/SKIP results and reasons.
-- Configurable ISO mode: automatic size heuristic, force CD or force DVD.
-- Overall batch progress and current-title progress reported by `chdman`.
-- Live backend output, final summary, persistent preferences and batch logs.
-- Source deletion OFF by default, guarded by two explicit `DELETE` confirmations.
-- Shared tracks, M3U-backed files, incomplete layouts, external sources and unsupported sidecars receive conservative protection.
-- No third-party Python packages are required.
+<p align="center">
+  <img src="docs/screenshots/01-main-menu.png" alt="Main menu with START selected" width="96%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/02-extensions.png" alt="Supported file extension selector" width="49%" />
+  <img src="docs/screenshots/03-scan-results.png" alt="Recursive scan results and conversion queue" width="49%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/04-progress.png" alt="Overall and per-title conversion progress" width="96%" />
+</p>
 
-## Requirements
+*Screens show representative example data. The dependency LED is green when `chdman` is detected.*
 
-- Linux, Python 3.9+ and a terminal with curses support.
-- MAME `chdman` executable.
+## ⚡ What it does
 
-Debian/Ubuntu/Linux Mint:
+- **START** scans the selected folder and its subfolders; when no folder is selected, it opens the folder browser first.
+- Supports `.cue`, `.gdi`, `.toc` and `.iso` descriptors. All four are enabled by default.
+- Shows a `READY` / `SKIP` preview before conversion.
+- Displays overall batch progress and per-title progress when `chdman` reports it.
+- Stores preferences and writes a log for each batch.
+
+## 🚀 Install and run
+
+Debian / Ubuntu / Linux Mint:
 
 ```bash
 sudo apt update
 sudo apt install mame-tools
 ```
 
-## Run from source
+Then run from the extracted project folder:
 
 ```bash
-git clone https://github.com/SilverCrow2323/chd-batch-converter.git
-cd chd-batch-converter
 python3 chd_batch_converter.py
 ```
 
-Or use the terminal launcher:
+Or use `run_chd_batch_converter.sh`. `install_desktop_launcher.sh` adds a launcher that opens the TUI in a terminal.
 
-```bash
-chmod +x run_chd_batch_converter.sh
-./run_chd_batch_converter.sh
-```
+## 🕹️ Basic controls
 
-To install a desktop launcher:
+- **START** — scan and convert the selected folder.
+- **Select folder** — choose or change the library folder.
+- **File extensions** — choose which supported descriptors to search for.
+- **SPACE** on source cleanup — toggle deletion for the next batch.
+- In scan results: **D** toggles cleanup, **ENTER** starts the reviewed queue, **Q** returns to the menu.
 
-```bash
-bash install_desktop_launcher.sh
-```
+## 🛡️ Source safety
 
-## Build the release ZIP
+Source deletion is **OFF by default**. To enable it, the app asks for `DELETE` before the batch and asks again after conversion. Only sources belonging to successfully created and verified CHDs are eligible; shared tracks, playlist-backed files and uncertain layouts are preserved. Existing CHDs are never overwritten.
 
-```bash
-bash assemble_release.sh
-```
-
-The script builds `dist/CHD_Batch_Converter_Linux_v2.0.0.zip` from the checked-in source and runs `unzip -t` before reporting success.
-
-## Tests
+## 🧪 Tests
 
 ```bash
 python3 -m py_compile chd_batch_converter.py
 python3 -m unittest discover -s tests -v
 ```
 
-The automated conversion-flow tests use a fake `chdman` executable. Run an end-to-end conversion with a real MAME installation on the target system before processing an important library.
+No third-party Python packages are required. MAME's `chdman` is the runtime dependency.
 
 ---
 
