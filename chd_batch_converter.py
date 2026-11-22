@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 APP_NAME = "CHD Batch Converter"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 FACTORY = "SPDW Factory"
 MIN_PYTHON = (3, 9)
 SUPPORTED_EXTENSIONS = (".cue", ".gdi", ".toc", ".iso")
@@ -558,36 +558,42 @@ def boot_animation(stdscr, colors: Dict[str, int], dependency_ok: bool, chdman: 
         time.sleep(0.055)
 
 
-def draw_menu(stdscr, colors: Dict[str, int], dependency_ok: bool, chdman: Optional[str], config: Dict[str, object], selected: int, folder: Optional[Path], notice: str) -> None:
-    stdscr.erase()
-    header(stdscr, colors, dependency_ok, chdman, "MAIN MENU")
-    width = stdscr.getmaxyx()[1]
-    safe_add(stdscr, 5, 4, "Choose an operation:", width - 8, curses.A_BOLD)
+def main_menu_items(config: Dict[str, object]) -> List[str]:
+    """Return the main menu in display order; START is always the primary action."""
     delete_label = "ON  (requires two confirmations)" if config.get("delete_sources") else "OFF (recommended)"
     iso_mode = str(config.get("iso_mode", "auto")).upper()
     ext_count = len(config.get("extensions", []))
-    items = [
-        "Select a folder and scan",
+    return [
+        "START  - Scan and convert selected folder",
+        "Select folder",
         "File extensions  [%d/%d enabled]" % (ext_count, len(SUPPORTED_EXTENSIONS)),
         "Delete source files after verification  [%s]" % delete_label,
         "ISO interpretation  [%s]" % iso_mode,
         "About / safety information",
         "Quit",
     ]
+
+
+def draw_menu(stdscr, colors: Dict[str, int], dependency_ok: bool, chdman: Optional[str], config: Dict[str, object], selected: int, folder: Optional[Path], notice: str) -> None:
+    stdscr.erase()
+    header(stdscr, colors, dependency_ok, chdman, "MAIN MENU")
+    width = stdscr.getmaxyx()[1]
+    safe_add(stdscr, 5, 4, "Choose an operation:", width - 8, curses.A_BOLD)
+    items = main_menu_items(config)
     for i, item in enumerate(items):
         attr = colors.get("selected", 0) | curses.A_BOLD if i == selected else 0
         prefix = "> " if i == selected else "  "
-        safe_add(stdscr, 6 + i * 2, 5, prefix + item, width - 10, attr)
-    safe_add(stdscr, 18, 4, "Selected folder:", width - 8, curses.A_BOLD)
-    safe_add(stdscr, 19, 4, str(folder) if folder else "(not selected)", width - 8)
-    safe_add(stdscr, 20, 4, "Python %s  |  %s  |  Standard library only" % (platform.python_version(), platform.system()), width - 8, curses.A_DIM)
+        safe_add(stdscr, 6 + i, 5, prefix + item, width - 10, attr)
+    safe_add(stdscr, 15, 4, "Selected folder:", width - 8, curses.A_BOLD)
+    safe_add(stdscr, 16, 4, str(folder) if folder else "(not selected - choose a folder, then press START)", width - 8)
+    safe_add(stdscr, 17, 4, "Python %s  |  %s  |  Standard library only" % (platform.python_version(), platform.system()), width - 8, curses.A_DIM)
     if not dependency_ok:
-        safe_add(stdscr, 21, 4, "DEPENDENCY ERROR: " + (notice or "Install MAME tools to enable conversion."), width - 8, colors.get("red", 0) | curses.A_BOLD)
+        safe_add(stdscr, 18, 4, "DEPENDENCY ERROR: " + (notice or "Install MAME tools to enable conversion."), width - 8, colors.get("red", 0) | curses.A_BOLD)
     elif notice:
-        safe_add(stdscr, 21, 4, notice, width - 8, colors.get("yellow", 0))
+        safe_add(stdscr, 18, 4, notice, width - 8, colors.get("yellow", 0))
     elif chdman:
-        safe_add(stdscr, 21, 4, "chdman: " + chdman, width - 8, curses.A_DIM)
-    footer(stdscr, "UP/DOWN: move   ENTER: select   SPACE: toggle   Q: quit")
+        safe_add(stdscr, 18, 4, "chdman: " + chdman, width - 8, curses.A_DIM)
+    footer(stdscr, "UP/DOWN: move   ENTER: select   SPACE: toggle cleanup   Q: quit")
     stdscr.refresh()
 
 
@@ -1187,6 +1193,64 @@ def run_batch(
     draw_summary(stdscr, colors, dependency_ok, chdman, results, deleted, preserved, cleanup_enabled, interrupted, log_path, cleanup_details)
 
 
+def start_conversion_flow(
+    stdscr, colors: Dict[str, int], dependency_ok: bool, chdman: Optional[str],
+    config: Dict[str, object], selected_folder: Optional[Path],
+) -> Tuple[Optional[Path], str]:
+    """Scan the selected folder and run the reviewed conversion queue."""
+    if not dependency_ok:
+        return selected_folder, "Install MAME tools before starting a conversion."
+
+    root = selected_folder
+    if root is None:
+        root = folder_picker(stdscr, colors, dependency_ok, chdman)
+        if root is None:
+            return None, "Folder selection canceled. Choose a folder before pressing START."
+    try:
+        root = root.resolve(strict=True)
+        if not root.is_dir():
+            raise NotADirectoryError(str(root))
+    except OSError as exc:
+        return None, "Selected folder is not accessible: " + str(exc)
+
+    def update_scan(count: int, location: str) -> None:
+        draw_scanning(stdscr, colors, dependency_ok, chdman, root, count, location)
+
+    all_jobs, folders_scanned = scan_for_jobs(root, update_scan)
+    mark_playlist_dependencies(root, all_jobs)
+    selected_exts = set(config.get("extensions", DEFAULT_EXTENSIONS))
+    selected_jobs = [job for job in all_jobs if job.descriptor.suffix.lower() in selected_exts]
+    choose_iso_modes(all_jobs, str(config.get("iso_mode", "auto")))
+    entries = prepare_preview(selected_jobs, all_jobs, root)
+    if not entries:
+        return root, "No descriptors matched the selected extensions. Adjust File extensions and press START again."
+
+    runnable = [entry.job for entry in entries if entry.ready]
+    cursor = 0
+    scroll = 0
+    delete_for_batch = bool(config.get("delete_sources", False))
+    while True:
+        draw_results(stdscr, colors, dependency_ok, chdman, root, entries, cursor, scroll, delete_for_batch, folders_scanned)
+        key = stdscr.getch()
+        if key in (curses.KEY_UP, ord("k")):
+            cursor = max(0, cursor - 1)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            cursor = min(len(entries) - 1, cursor + 1)
+        elif key in (ord("d"), ord("D")):
+            delete_for_batch = not delete_for_batch
+        elif key in (ord("q"), ord("Q"), 27):
+            return root, "Scan results dismissed. No files were changed."
+        elif key in (10, 13):
+            if not runnable:
+                return root, "No eligible conversions. Nothing was changed."
+            if delete_for_batch and not confirm_cleanup_arm(stdscr, colors, dependency_ok, chdman):
+                return root, "Cleanup was not armed. No files were changed."
+            config["delete_sources"] = delete_for_batch
+            save_config(config)
+            run_batch(stdscr, colors, dependency_ok, chdman or "chdman", root, runnable, all_jobs, delete_for_batch)
+            return root, "Batch finished. Review the summary and log."
+
+
 def run_app(stdscr) -> None:
     colors = init_colors()
     try:
@@ -1202,6 +1266,7 @@ def run_app(stdscr) -> None:
     selected = 0
     selected_folder: Optional[Path] = None
     notice = dependency_message if not dependency_ok else ""
+    menu_size = len(main_menu_items(config))
     while True:
         if screen_too_small(stdscr):
             key = stdscr.getch()
@@ -1211,88 +1276,46 @@ def run_app(stdscr) -> None:
         draw_menu(stdscr, colors, dependency_ok, chdman, config, selected, selected_folder, notice)
         key = stdscr.getch()
         if key in (curses.KEY_UP, ord("k")):
-            selected = (selected - 1) % 6
+            selected = (selected - 1) % menu_size
         elif key in (curses.KEY_DOWN, ord("j")):
-            selected = (selected + 1) % 6
+            selected = (selected + 1) % menu_size
         elif key in (ord("q"), ord("Q"), 27):
             return
-        elif key == ord(" ") and selected == 2:
+        elif key == ord(" ") and selected == 3:
             config["delete_sources"] = not bool(config.get("delete_sources", False))
             save_config(config)
             notice = "Source cleanup set to %s." % ("ON" if config["delete_sources"] else "OFF")
         elif key in (10, 13):
             if selected == 0:
-                if not dependency_ok:
-                    notice = dependency_message
-                    continue
+                selected_folder, notice = start_conversion_flow(
+                    stdscr, colors, dependency_ok, chdman, config, selected_folder
+                )
+            elif selected == 1:
                 root = folder_picker(stdscr, colors, dependency_ok, chdman)
                 if root is None:
                     notice = "Folder selection canceled."
-                    continue
-                try:
-                    root = root.resolve(strict=True)
-                    if not root.is_dir():
-                        raise NotADirectoryError(str(root))
-                except OSError as exc:
-                    notice = "Selected folder is not accessible: " + str(exc)
-                    continue
-                scan_state = {"dirs": 0, "current": str(root)}
-                def update_scan(count: int, location: str) -> None:
-                    scan_state["dirs"] = count
-                    scan_state["current"] = location
-                    draw_scanning(stdscr, colors, dependency_ok, chdman, root, count, location)
-                all_jobs, folders_scanned = scan_for_jobs(root, update_scan)
-                mark_playlist_dependencies(root, all_jobs)
-                selected_exts = set(config.get("extensions", DEFAULT_EXTENSIONS))
-                selected_jobs = [job for job in all_jobs if job.descriptor.suffix.lower() in selected_exts]
-                choose_iso_modes(all_jobs, str(config.get("iso_mode", "auto")))
-                selected_folder = root
-                entries = prepare_preview(selected_jobs, all_jobs, root)
-                if not entries:
-                    notice = "No descriptors matched the selected extensions. Adjust File extensions and scan again."
-                    continue
-                runnable = [entry.job for entry in entries if entry.ready]
-                cursor = 0
-                scroll = 0
-                delete_for_batch = bool(config.get("delete_sources", False))
-                while True:
-                    draw_results(stdscr, colors, dependency_ok, chdman, root, entries, cursor, scroll, delete_for_batch, folders_scanned)
-                    pkey = stdscr.getch()
-                    if pkey in (curses.KEY_UP, ord("k")):
-                        cursor = max(0, cursor - 1)
-                    elif pkey in (curses.KEY_DOWN, ord("j")):
-                        cursor = min(len(entries) - 1, cursor + 1)
-                    elif pkey in (ord("d"), ord("D")):
-                        delete_for_batch = not delete_for_batch
-                    elif pkey in (ord("q"), ord("Q"), 27):
-                        notice = "Scan results dismissed. No files were changed."
-                        break
-                    elif pkey in (10, 13):
-                        if not runnable:
-                            notice = "No eligible conversions. Nothing was changed."
-                            break
-                        if delete_for_batch:
-                            if not confirm_cleanup_arm(stdscr, colors, dependency_ok, chdman):
-                                notice = "Cleanup was not armed. No files were changed."
-                                break
-                        config["delete_sources"] = delete_for_batch
-                        save_config(config)
-                        run_batch(stdscr, colors, dependency_ok, chdman or "chdman", root, runnable, all_jobs, delete_for_batch)
-                        notice = "Batch finished. Review the summary and log."
-                        break
-            elif selected == 1:
+                else:
+                    try:
+                        root = root.resolve(strict=True)
+                        if not root.is_dir():
+                            raise NotADirectoryError(str(root))
+                        selected_folder = root
+                        notice = "Folder selected. Press START to scan and convert."
+                    except OSError as exc:
+                        notice = "Selected folder is not accessible: " + str(exc)
+            elif selected == 2:
                 extension_menu(stdscr, colors, dependency_ok, chdman, config)
                 notice = "Extension preferences saved."
-            elif selected == 2:
+            elif selected == 3:
                 config["delete_sources"] = not bool(config.get("delete_sources", False))
                 save_config(config)
                 notice = "Source cleanup set to %s." % ("ON" if config["delete_sources"] else "OFF")
-            elif selected == 3:
+            elif selected == 4:
                 iso_menu(stdscr, colors, dependency_ok, chdman, config)
                 notice = "ISO handling preference saved."
-            elif selected == 4:
-                about_screen(stdscr, colors, dependency_ok, chdman)
             elif selected == 5:
+                about_screen(stdscr, colors, dependency_ok, chdman)
+            elif selected == 6:
                 return
 
 
