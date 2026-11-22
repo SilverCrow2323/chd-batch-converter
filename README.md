@@ -7,14 +7,14 @@ A small terminal tool for scanning a game library recursively and converting sup
 ## 📸 Quick look
 
 <p align="center">
-  <img src="docs/screenshots/01-main-menu.png" alt="Main menu with START selected" width="96%" />
+  <img src="docs/screenshots/01-main-menu.svg" alt="Main menu with START selected" width="96%" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/02-extensions.png" alt="Supported file extension selector" width="49%" />
-  <img src="docs/screenshots/03-scan-results.png" alt="Recursive scan results and conversion queue" width="49%" />
+  <img src="docs/screenshots/02-extensions.svg" alt="Supported file extension selector" width="49%" />
+  <img src="docs/screenshots/03-scan-results.svg" alt="Recursive scan results and conversion queue" width="49%" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/04-progress.png" alt="Overall and per-title conversion progress" width="96%" />
+  <img src="docs/screenshots/04-progress.svg" alt="Overall and per-title conversion progress" width="96%" />
 </p>
 
 *Screens show representative example data. The dependency LED is green when `chdman` is detected.*
