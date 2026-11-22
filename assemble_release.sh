@@ -11,7 +11,7 @@ cp "$ROOT/chd_batch_converter.py" "$ROOT/README.md" "$ROOT/CHANGELOG.md" \
    "$ROOT/RELEASE_NOTES_v2.1.0.md" "$ROOT/LICENSE" "$ROOT/requirements.txt" \
    "$ROOT/run_chd_batch_converter.sh" "$ROOT/install_desktop_launcher.sh" "$STAGING/"
 cp "$ROOT/tests/test_converter.py" "$STAGING/tests/"
-cp "$ROOT/docs/screenshots/"*.png "$STAGING/docs/screenshots/"
+cp "$ROOT/docs/screenshots/"*.svg "$STAGING/docs/screenshots/"
 
 rm -f "$OUTPUT"
 (
