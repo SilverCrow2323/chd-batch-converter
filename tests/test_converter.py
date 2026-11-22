@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -189,6 +190,29 @@ class ConversionFlowTests(unittest.TestCase):
             self.assertFalse((root / "disc.chd").exists())
             self.assertTrue(iso.exists())
             self.assertFalse(list(root.glob("*.partial.chd")))
+
+
+
+class MainMenuTests(unittest.TestCase):
+    def test_start_is_first_menu_item_and_folder_selection_is_separate(self):
+        items = app.main_menu_items(app.default_config())
+        self.assertTrue(items[0].startswith("START"))
+        self.assertEqual(items[1], "Select folder")
+        self.assertIn("File extensions", items[2])
+        self.assertIn("Delete source files", items[3])
+        self.assertEqual(items[-1], "Quit")
+
+    def test_start_reuses_an_already_selected_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screen = FakeScreen()
+            with mock.patch.object(app, "folder_picker", side_effect=AssertionError("START should reuse the selected folder")), \
+                 mock.patch.object(app, "scan_for_jobs", return_value=([], 1)):
+                selected, notice = app.start_conversion_flow(
+                    screen, {}, True, "chdman", app.default_config(), root
+                )
+            self.assertEqual(selected, root)
+            self.assertIn("No descriptors matched", notice)
 
 
 if __name__ == "__main__":
