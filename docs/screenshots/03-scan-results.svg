@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="656" viewBox="0 0 1100 656">
+<rect width="1100" height="656" rx="18" fill="#080d17"/><rect x="16" y="14" width="1068" height="628" rx="14" fill="#101827" stroke="#263449" stroke-width="2"/>
+<circle cx="36" cy="33" r="5.5" fill="#fb7185"/><circle cx="55" cy="33" r="5.5" fill="#fbbf24"/><circle cx="74" cy="33" r="5.5" fill="#4ade80"/>
+<text x="550" y="34" text-anchor="middle" font-family="monospace" font-size="12" fill="#8291a7">SPDW FACTORY / CHD BATCH CONVERTER</text><text x="1068" y="34" text-anchor="end" font-family="monospace" font-size="12" fill="#8291a7">SCAN RESULTS</text>
+<g font-family="monospace" font-size="14.5" xml:space="preserve">
+<text x="55" y="77" font-weight="700" fill="#5eead4">  SPDW FACTORY  //  CHD BATCH CONVERTER                                                                v2.1.0</text><text x="55" y="98" font-weight="700" fill="#86efac">  Recursive game-disc conversion utility                                                    ● CHDMAN ONLINE</text><text x="55" y="119" fill="#5eead4">  ------------------------------------------------------------------------------------------------------------</text>
+<text x="55" y="140" fill="#d7e0ed">  SCAN RESULTS / CONVERSION QUEUE</text><text x="55" y="182" fill="#d7e0ed">   Folder: /home/user/Games/Retro Library</text><text x="55" y="203" font-weight="700" fill="#d7e0ed">   Directories: 18  |  Found: 3  |  Ready: 2  |  Skipped: 1</text>
+<text x="55" y="245" font-weight="700" fill="#86efac">   [ ] DELETE SOURCES after successful verification</text><text x="55" y="266" fill="#86efac">   Source cleanup: OFF - originals will be kept</text>
+<text x="55" y="329" fill="#86efac">    [READY] PS2/Gran Turismo 4.cue -&gt; Gran Turismo 4.chd</text><text x="55" y="350" fill="#86efac">    [READY] Dreamcast/Sonic Adventure.gdi -&gt; Sonic Adventure.chd</text><text x="55" y="371" fill="#fca5a5">    [SKIP ] PS1/Example Disc.cue -- Missing referenced track: track02.bin</text>
+<text x="55" y="581" fill="#8291a7">  ------------------------------------------------------------------------------------------------------------</text><text x="55" y="602" fill="#8291a7">  UP/DOWN: inspect   D: toggle cleanup   ENTER: start   Q/ESC: back to menu</text>
+</g></svg>
