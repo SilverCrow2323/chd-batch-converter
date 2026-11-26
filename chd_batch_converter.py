@@ -426,6 +426,19 @@ def delete_successful_sources(
         job = job_lookup[descriptor]
         if not job.references_complete:
             continue
+        # Treat one disc image as a single snapshot. If any descriptor/track
+        # changed after the batch began, preserve the entire source set.
+        job_paths = {descriptor, *job.sources}
+        changed = [
+            path for path in job_paths
+            if signatures.get(path) is None or file_signature(path) != signatures.get(path)
+        ]
+        if changed:
+            reason = "source set changed or could not be checked during the batch"
+            for path in job_paths:
+                if is_inside(path, root):
+                    protected[path] = reason
+            continue
         if descriptor not in protected and is_inside(descriptor, root):
             deletion_candidates.add(descriptor)
         else:

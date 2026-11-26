@@ -127,6 +127,22 @@ class CleanupSafetyTests(unittest.TestCase):
             self.assertTrue(shared.exists())
             self.assertGreaterEqual(preserved, 1)
 
+    def test_changed_source_preserves_entire_disc_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared, descriptor, _other = self._make_two_cues(root)
+            jobs = [descriptor]
+            signatures = app.collect_initial_signatures(jobs)
+            shared.write_bytes(b"changed while conversion was running")
+            deleted, preserved, details = app.delete_successful_sources(
+                root, jobs, [app.JobResult(descriptor, "SUCCESS")], signatures
+            )
+            self.assertEqual(deleted, 0)
+            self.assertGreaterEqual(preserved, 2)
+            self.assertTrue(shared.exists())
+            self.assertTrue(descriptor.descriptor.exists())
+            self.assertTrue(any("source set changed" in line for line in details))
+
 
 class ConversionFlowTests(unittest.TestCase):
     def _fake_chdman(self, directory):
