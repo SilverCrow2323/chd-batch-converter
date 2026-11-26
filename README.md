@@ -54,7 +54,7 @@ Or use `run_chd_batch_converter.sh`. `install_desktop_launcher.sh` adds a launch
 
 ## 🛡️ Source safety
 
-Source deletion is **OFF by default**. To enable it, the app asks for `DELETE` before the batch and asks again after conversion. Only sources belonging to successfully created and verified CHDs are eligible; shared tracks, playlist-backed files and uncertain layouts are preserved. Existing CHDs are never overwritten.
+Descriptor and track references that traverse symbolic links are rejected before conversion, and the cleanup layer never resolves a symlink into its target. Source deletion is **OFF by default**. To enable it, the app asks for `DELETE` before the batch and asks again after conversion. Only sources belonging to successfully created and verified CHDs are eligible; shared tracks, playlist-backed files and uncertain layouts are preserved. Existing CHDs are never overwritten.
 
 ## 🧪 Tests
 

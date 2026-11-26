@@ -70,6 +70,24 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(refs, {track.resolve()})
 
 
+class SymlinkReferenceTests(unittest.TestCase):
+    def test_cue_symlink_track_is_not_resolved_to_its_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real-track.bin"
+            target.write_bytes(b"track")
+            link = root / "linked-track.bin"
+            link.symlink_to(target)
+            cue = root / "game.cue"
+            cue.write_text('FILE "linked-track.bin" BINARY\\n TRACK 01 MODE1/2352\\n', encoding="utf-8")
+            job = app.make_job(cue)
+            self.assertIn(link.absolute(), job.sources)
+            self.assertNotIn(target.resolve(), job.sources)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
+
 class CleanupSafetyTests(unittest.TestCase):
     def _make_two_cues(self, root):
         shared = root / "shared.bin"
