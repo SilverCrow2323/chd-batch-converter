@@ -111,6 +111,25 @@ class CleanupSafetyTests(unittest.TestCase):
             self.assertFalse(first.descriptor.exists())
             self.assertFalse(second.descriptor.exists())
 
+    def test_source_modified_after_scan_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared, first, second = self._make_two_cues(root)
+            jobs = [first, second]
+            signatures = app.collect_initial_signatures(jobs)
+            original_size = shared.stat().st_size
+            shared.write_bytes(b"X" * original_size)
+            deleted, preserved, details = app.delete_successful_sources(
+                root, jobs,
+                [app.JobResult(first, "SUCCESS"), app.JobResult(second, "SUCCESS")],
+                signatures,
+            )
+            self.assertTrue(shared.exists(), "changed source must never be deleted")
+            self.assertEqual(shared.stat().st_size, original_size)
+            self.assertGreaterEqual(preserved, 1)
+            self.assertTrue(any("changed or could not be checked" in line for line in details))
+            self.assertGreaterEqual(deleted, 2, "unchanged descriptors remain eligible")
+
     def test_m3u_backed_descriptor_is_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
