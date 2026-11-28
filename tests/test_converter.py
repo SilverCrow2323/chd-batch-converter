@@ -88,6 +88,21 @@ class SymlinkReferenceTests(unittest.TestCase):
             self.assertTrue(target.exists(), "target must remain untouched")
 
 
+    def test_symlinked_descriptor_is_rejected_before_conversion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            track = root / "track.bin"
+            track.write_bytes(b"track")
+            target = root / "real.cue"
+            target.write_text('FILE "track.bin" BINARY\n TRACK 01 MODE1/2352\n', encoding="utf-8")
+            alias = root / "alias.cue"
+            alias.symlink_to(target)
+            job = app.make_job(alias)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("descriptor path contains a symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "the real descriptor must remain untouched")
+
+
 class CleanupSafetyTests(unittest.TestCase):
     def _make_two_cues(self, root):
         shared = root / "shared.bin"
