@@ -70,6 +70,83 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(refs, {track.resolve()})
 
 
+class SymlinkReferenceTests(unittest.TestCase):
+    def test_cue_symlink_track_is_not_resolved_to_its_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real-track.bin"
+            target.write_bytes(b"track")
+            link = root / "linked-track.bin"
+            link.symlink_to(target)
+            cue = root / "game.cue"
+            cue.write_text('FILE "linked-track.bin" BINARY\\n TRACK 01 MODE1/2352\\n', encoding="utf-8")
+            job = app.make_job(cue)
+            self.assertIn(link.absolute(), job.sources)
+            self.assertNotIn(target.resolve(), job.sources)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
+
+    def test_symlinked_descriptor_is_rejected_before_conversion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            track = root / "track.bin"
+            track.write_bytes(b"track")
+            target = root / "real.cue"
+            target.write_text('FILE "track.bin" BINARY\n TRACK 01 MODE1/2352\n', encoding="utf-8")
+            alias = root / "alias.cue"
+            alias.symlink_to(target)
+            job = app.make_job(alias)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("descriptor path contains a symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "the real descriptor must remain untouched")
+
+    def test_gdi_symlink_track_is_not_resolved_to_its_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real-track.bin"
+            target.write_bytes(b"track")
+            link = root / "linked-track.bin"
+            link.symlink_to(target)
+            gdi = root / "game.gdi"
+            gdi.write_text('1\\n1 0 4 2352 "linked-track.bin" 0\\n', encoding="utf-8")
+            job = app.make_job(gdi)
+            self.assertIn(link.absolute(), job.sources)
+            self.assertNotIn(target.resolve(), job.sources)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
+    def test_toc_symlink_track_is_not_resolved_to_its_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real-track.bin"
+            target.write_bytes(b"track")
+            link = root / "linked-track.bin"
+            link.symlink_to(target)
+            toc = root / "game.toc"
+            toc.write_text('CD_DA\\nDATAFILE "linked-track.bin" 00:00:00\\n', encoding="utf-8")
+            job = app.make_job(toc)
+            self.assertIn(link.absolute(), job.sources)
+            self.assertNotIn(target.resolve(), job.sources)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
+    def test_iso_symlink_descriptor_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real.iso"
+            target.write_bytes(b"0" * 2048)
+            alias = root / "alias.iso"
+            alias.symlink_to(target)
+            job = app.make_job(alias)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("descriptor path contains a symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
+
 class CleanupSafetyTests(unittest.TestCase):
     def _make_two_cues(self, root):
         shared = root / "shared.bin"
@@ -110,6 +187,25 @@ class CleanupSafetyTests(unittest.TestCase):
             self.assertFalse(shared.exists())
             self.assertFalse(first.descriptor.exists())
             self.assertFalse(second.descriptor.exists())
+
+    def test_source_modified_after_scan_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared, first, second = self._make_two_cues(root)
+            jobs = [first, second]
+            signatures = app.collect_initial_signatures(jobs)
+            original_size = shared.stat().st_size
+            shared.write_bytes(b"X" * original_size)
+            deleted, preserved, details = app.delete_successful_sources(
+                root, jobs,
+                [app.JobResult(first, "SUCCESS"), app.JobResult(second, "SUCCESS")],
+                signatures,
+            )
+            self.assertTrue(shared.exists(), "changed source must never be deleted")
+            self.assertEqual(shared.stat().st_size, original_size)
+            self.assertGreaterEqual(preserved, 1)
+            self.assertTrue(any("changed or could not be checked" in line for line in details))
+            self.assertGreaterEqual(deleted, 2, "unchanged descriptors remain eligible")
 
     def test_m3u_backed_descriptor_is_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -149,7 +149,7 @@ def parse_cue(path: Path) -> Tuple[Set[Path], bool, List[str]]:
             candidate = Path(tokens[1].replace("\\", os.sep))
             if not candidate.is_absolute():
                 candidate = path.parent / candidate
-            references.add(candidate.resolve(strict=False))
+            references.add(Path(os.path.abspath(candidate)))
         except (ValueError, OSError) as exc:
             complete = False
             notes.append("CUE line %d: could not parse FILE path (%s)." % (line_number, exc))
@@ -178,7 +178,7 @@ def parse_gdi(path: Path) -> Tuple[Set[Path], bool, List[str]]:
             candidate = Path(tokens[4].replace("\\", os.sep))
             if not candidate.is_absolute():
                 candidate = path.parent / candidate
-            references.add(candidate.resolve(strict=False))
+            references.add(Path(os.path.abspath(candidate)))
         except (ValueError, OSError) as exc:
             complete = False
             notes.append("GDI line %d: could not parse track path (%s)." % (line_number, exc))
@@ -210,7 +210,7 @@ def parse_toc(path: Path) -> Tuple[Set[Path], bool, List[str]]:
             candidate = Path(tokens[1].replace("\\", os.sep))
             if not candidate.is_absolute():
                 candidate = path.parent / candidate
-            references.add(candidate.resolve(strict=False))
+            references.add(Path(os.path.abspath(candidate)))
         except (ValueError, OSError) as exc:
             complete = False
             notes.append("TOC line %d: could not parse source path (%s)." % (line_number, exc))
@@ -232,7 +232,7 @@ def make_job(descriptor: Path) -> DiscJob:
         refs, complete, notes = parse_toc(descriptor)
         return DiscJob(descriptor, "createcd", refs, complete, notes=notes)
     if extension == ".iso":
-        return DiscJob(descriptor, "createdvd", {descriptor.resolve(strict=False)}, True)
+        return DiscJob(descriptor, "createdvd", {Path(os.path.abspath(descriptor))}, True)
     raise ValueError("Unsupported input type: " + descriptor.suffix)
 
 
@@ -307,13 +307,33 @@ def mark_playlist_dependencies(root: Path, jobs: Sequence[DiscJob]) -> None:
 
 def is_inside(path: Path, root: Path) -> bool:
     try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(root)))
         return True
     except (ValueError, OSError):
         return False
 
 
+def has_symlink_component(path: Path, root: Path) -> bool:
+    """Fail closed if the lexical path or any component below root is a symlink."""
+    try:
+        absolute = Path(os.path.abspath(path))
+        relative = absolute.relative_to(Path(os.path.abspath(root)))
+    except (ValueError, OSError):
+        return True
+    current = Path(os.path.abspath(root))
+    for part in relative.parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def check_job_structure(job: DiscJob, root: Path) -> Optional[str]:
+    if has_symlink_component(job.descriptor, root):
+        return "Descriptor path contains a symbolic link; refusing automatic conversion and cleanup."
     try:
         size = job.descriptor.stat().st_size
     except OSError as exc:
@@ -332,6 +352,8 @@ def check_job_structure(job: DiscJob, root: Path) -> Optional[str]:
     if not job.sources:
         return "No referenced track files were identified."
     for source in job.sources:
+        if has_symlink_component(source, root):
+            return "Referenced track path contains a symbolic link; refusing automatic conversion and cleanup."
         if not is_inside(source, root):
             job.references_complete = False
             job.notes.append("External source will be preserved: " + str(source))
