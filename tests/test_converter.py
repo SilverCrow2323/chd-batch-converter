@@ -102,6 +102,50 @@ class SymlinkReferenceTests(unittest.TestCase):
             self.assertIn("descriptor path contains a symbolic link", reason.lower())
             self.assertTrue(target.exists(), "the real descriptor must remain untouched")
 
+    def test_gdi_symlink_track_is_not_resolved_to_its_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real-track.bin"
+            target.write_bytes(b"track")
+            link = root / "linked-track.bin"
+            link.symlink_to(target)
+            gdi = root / "game.gdi"
+            gdi.write_text('1\\n1 0 4 2352 "linked-track.bin" 0\\n', encoding="utf-8")
+            job = app.make_job(gdi)
+            self.assertIn(link.absolute(), job.sources)
+            self.assertNotIn(target.resolve(), job.sources)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
+    def test_toc_symlink_track_is_not_resolved_to_its_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real-track.bin"
+            target.write_bytes(b"track")
+            link = root / "linked-track.bin"
+            link.symlink_to(target)
+            toc = root / "game.toc"
+            toc.write_text('CD_DA\\nDATAFILE "linked-track.bin" 00:00:00\\n', encoding="utf-8")
+            job = app.make_job(toc)
+            self.assertIn(link.absolute(), job.sources)
+            self.assertNotIn(target.resolve(), job.sources)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
+    def test_iso_symlink_descriptor_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "real.iso"
+            target.write_bytes(b"0" * 2048)
+            alias = root / "alias.iso"
+            alias.symlink_to(target)
+            job = app.make_job(alias)
+            reason = app.check_job_structure(job, root)
+            self.assertIn("descriptor path contains a symbolic link", reason.lower())
+            self.assertTrue(target.exists(), "target must remain untouched")
+
 
 class CleanupSafetyTests(unittest.TestCase):
     def _make_two_cues(self, root):
