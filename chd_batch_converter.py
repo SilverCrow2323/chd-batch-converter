@@ -178,7 +178,7 @@ def parse_gdi(path: Path) -> Tuple[Set[Path], bool, List[str]]:
             candidate = Path(tokens[4].replace("\\", os.sep))
             if not candidate.is_absolute():
                 candidate = path.parent / candidate
-            references.add(candidate.resolve(strict=False))
+            references.add(Path(os.path.abspath(candidate)))
         except (ValueError, OSError) as exc:
             complete = False
             notes.append("GDI line %d: could not parse track path (%s)." % (line_number, exc))
@@ -210,7 +210,7 @@ def parse_toc(path: Path) -> Tuple[Set[Path], bool, List[str]]:
             candidate = Path(tokens[1].replace("\\", os.sep))
             if not candidate.is_absolute():
                 candidate = path.parent / candidate
-            references.add(candidate.resolve(strict=False))
+            references.add(Path(os.path.abspath(candidate)))
         except (ValueError, OSError) as exc:
             complete = False
             notes.append("TOC line %d: could not parse source path (%s)." % (line_number, exc))
@@ -232,7 +232,7 @@ def make_job(descriptor: Path) -> DiscJob:
         refs, complete, notes = parse_toc(descriptor)
         return DiscJob(descriptor, "createcd", refs, complete, notes=notes)
     if extension == ".iso":
-        return DiscJob(descriptor, "createdvd", {descriptor.resolve(strict=False)}, True)
+        return DiscJob(descriptor, "createdvd", {Path(os.path.abspath(descriptor))}, True)
     raise ValueError("Unsupported input type: " + descriptor.suffix)
 
 
